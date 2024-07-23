@@ -16,22 +16,31 @@
  * limitations under the License.
  */
 
-import * as cdk from 'aws-cdk-lib';
-import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
-
-import { Construct } from 'constructs';
-import { CacheStorage } from '@project-lakechain/core';
-import { S3EventTrigger } from '@project-lakechain/s3-event-trigger';
-import { PdfTextConverter } from '@project-lakechain/pdf-text-converter';
-import { PandocTextConverter } from '@project-lakechain/pandoc-text-converter';
-import { RecursiveCharacterTextSplitter } from '@project-lakechain/recursive-character-text-splitter';
-import { CohereEmbeddingProcessor, CohereEmbeddingModel } from '@project-lakechain/bedrock-embedding-processors';
+import {
+  CohereEmbeddingModel,
+  CohereEmbeddingProcessor
+} from '@project-lakechain/bedrock-embedding-processors';
 import { ClipImageProcessor } from '@project-lakechain/clip-image-processor';
-import { OpenSearchDomain } from '@project-lakechain/opensearch-domain';
-import { OpenSearchVectorStorageConnector, OpenSearchVectorIndexDefinition } from '@project-lakechain/opensearch-vector-storage-connector';
-import { SharpImageTransform, sharp } from '@project-lakechain/sharp-image-transform';
+import { CacheStorage } from '@project-lakechain/core';
 import { KeybertTextProcessor } from '@project-lakechain/keybert-text-processor';
+import { OpenSearchDomain } from '@project-lakechain/opensearch-domain';
+import {
+  OpenSearchVectorIndexDefinition,
+  OpenSearchVectorStorageConnector
+} from '@project-lakechain/opensearch-vector-storage-connector';
+import { PandocTextConverter } from '@project-lakechain/pandoc-text-converter';
+import { PdfTextConverter } from '@project-lakechain/pdf-text-converter';
+import { RecursiveCharacterTextSplitter } from '@project-lakechain/recursive-character-text-splitter';
+import { S3EventTrigger } from '@project-lakechain/s3-event-trigger';
+import { SharpImageTransform, sharp } from '@project-lakechain/sharp-image-transform';
+import * as cdk from 'aws-cdk-lib';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as ecrAssets from 'aws-cdk-lib/aws-ecr-assets';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import { Construct } from 'constructs';
+import * as path from 'path';
 
 /**
  * An example showcasing how to build an end-to-end
@@ -39,7 +48,6 @@ import { KeybertTextProcessor } from '@project-lakechain/keybert-text-processor'
  * text, images and audio using Amazon OpenSearch.
  */
 export class SearchEnginePipeline extends cdk.Stack {
-
   /**
    * Stack constructor.
    */
@@ -108,11 +116,7 @@ export class SearchEnginePipeline extends cdk.Stack {
       .withIdentifier('SharpTransform')
       .withCacheStorage(cache)
       .withSource(trigger)
-      .withSharpTransforms(
-        sharp()
-          .resize(512)
-          .png()
-      )
+      .withSharpTransforms(sharp().resize(512).png())
       .build();
 
     ///////////////////////////////////////////
@@ -125,11 +129,7 @@ export class SearchEnginePipeline extends cdk.Stack {
       .withScope(this)
       .withIdentifier('KeybertProcessor')
       .withCacheStorage(cache)
-      .withSources([
-        trigger,
-        pdfConverter,
-        pandocConverter
-      ])
+      .withSources([trigger, pdfConverter, pandocConverter])
       .withVpc(vpc)
       .build();
 
@@ -158,7 +158,7 @@ export class SearchEnginePipeline extends cdk.Stack {
       .withIdentifier('CohereEmbeddingProcessor')
       .withCacheStorage(cache)
       .withSource(textSplitter)
-      .withRegion('us-east-1')
+      .withRegion(env.env?.region || 'eu-central-1')
       .withModel(CohereEmbeddingModel.COHERE_EMBED_MULTILINGUAL_V3)
       .build();
 
@@ -184,14 +184,15 @@ export class SearchEnginePipeline extends cdk.Stack {
       .withSource(cohereProcessor)
       .withVpc(vpc)
       .withIncludeDocument(true)
-      .withIndex(new OpenSearchVectorIndexDefinition.Builder()
-        .withIndexName('text-vectors')
-        .withKnnMethod('hnsw')
-        .withKnnEngine('nmslib')
-        .withSpaceType('l2')
-        .withDimensions(1024)
-        .withParameters({ 'ef_construction': 512, 'm': 16 })
-        .build()
+      .withIndex(
+        new OpenSearchVectorIndexDefinition.Builder()
+          .withIndexName('text-vectors')
+          .withKnnMethod('hnsw')
+          .withKnnEngine('nmslib')
+          .withSpaceType('l2')
+          .withDimensions(1024)
+          .withParameters({ ef_construction: 512, m: 16 })
+          .build()
       )
       .build();
 
@@ -203,17 +204,24 @@ export class SearchEnginePipeline extends cdk.Stack {
       .withEndpoint(openSearch.domain)
       .withSource(clipProcessor)
       .withVpc(vpc)
-      .withIndex(new OpenSearchVectorIndexDefinition.Builder()
-        .withIndexName('image-vectors')
-        .withKnnMethod('hnsw')
-        .withKnnEngine('nmslib')
-        .withSpaceType('cosinesimil')
-        .withDimensions(512)
-        .withParameters({ 'ef_construction': 512, 'm': 16 })
-        .build()
+      .withIndex(
+        new OpenSearchVectorIndexDefinition.Builder()
+          .withIndexName('image-vectors')
+          .withKnnMethod('hnsw')
+          .withKnnEngine('nmslib')
+          .withSpaceType('cosinesimil')
+          .withDimensions(512)
+          .withParameters({ ef_construction: 512, m: 16 })
+          .build()
       )
       .build();
 
+    new CLIPServer(this, 'CLIPServer', {
+      env: {
+        account: env.env?.account,
+        region: env.env?.region
+      }
+    });
     // Display the source bucket information in the console.
     new cdk.CfnOutput(this, 'SourceBucket', {
       description: 'The name of the source bucket.',
@@ -233,25 +241,55 @@ export class SearchEnginePipeline extends cdk.Stack {
    * subnets for the pipeline.
    */
   private createVpc(id: string): ec2.IVpc {
-    return (new ec2.Vpc(this, id, {
+    return new ec2.Vpc(this, id, {
       enableDnsSupport: true,
       enableDnsHostnames: true,
       ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/20'),
       maxAzs: 1,
-      subnetConfiguration: [{
-        name: 'public',
-        subnetType: ec2.SubnetType.PUBLIC,
-        cidrMask: 28
-      }, {
-        name: 'private',
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-        cidrMask: 24
-      }, {
-        name: 'isolated',
-        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-        cidrMask: 24
-      }]
-    }));
+      subnetConfiguration: [
+        {
+          name: 'public',
+          subnetType: ec2.SubnetType.PUBLIC,
+          cidrMask: 28
+        },
+        {
+          name: 'private',
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          cidrMask: 24
+        },
+        {
+          name: 'isolated',
+          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+          cidrMask: 24
+        }
+      ]
+    });
+  }
+}
+
+export class CLIPServer extends cdk.Stack {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+    // Build and push Docker image to ECR
+    const dockerImage = new ecrAssets.DockerImageAsset(this, 'CLIPServerImage', {
+      directory: path.join(__dirname, 'server') // Path to your Dockerfile and app code
+    });
+
+    // Create a Lambda function from the Docker image
+    const lambdaFunction = new lambda.DockerImageFunction(this, 'CLIPServerLambda', {
+      code: lambda.DockerImageCode.fromEcr(dockerImage.repository, {
+        tagOrDigest: dockerImage.imageTag
+      }),
+      memorySize: 4096,
+      timeout: cdk.Duration.seconds(30)
+    });
+
+    // Create an API Gateway
+    const api = new apigateway.LambdaRestApi(this, 'CLIPServerAPI', {
+      handler: lambdaFunction,
+      proxy: true // This enables proxying all requests to the Lambda function
+    });
   }
 }
 

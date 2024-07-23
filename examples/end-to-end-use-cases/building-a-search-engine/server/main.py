@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from utils import presign_url
 from urllib.parse import unquote
+from mangum import Mangum
 
 from params import (
   es_hostname,
@@ -114,3 +115,5 @@ def delete_images_from_index():
   Deletes all images from the index.
   """
   return delete_images(client)
+
+handler = Mangum(app)
