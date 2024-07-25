@@ -216,12 +216,15 @@ export class SearchEnginePipeline extends cdk.Stack {
       )
       .build();
 
-    new CLIPServer(this, 'CLIPServer', {
+    const clipServer = new CLIPServer(this, 'CLIPServer', {
       env: {
         account: env.env?.account,
         region: env.env?.region
-      }
+      },
+      opensearchDomain: openSearch.domain,
+      vpc,
     });
+    clipServer.node.addDependency(openSearch)
     // Display the source bucket information in the console.
     new cdk.CfnOutput(this, 'SourceBucket', {
       description: 'The name of the source bucket.',
@@ -267,8 +270,12 @@ export class SearchEnginePipeline extends cdk.Stack {
   }
 }
 
+interface CLIPServerProps extends cdk.StackProps {
+  opensearchDomain: cdk.aws_opensearchservice.IDomain;
+  vpc: ec2.IVpc;
+}
 export class CLIPServer extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: CLIPServerProps) {
     super(scope, id, props);
 
     // Build and push Docker image to ECR
@@ -282,14 +289,32 @@ export class CLIPServer extends cdk.Stack {
         tagOrDigest: dockerImage.imageTag
       }),
       memorySize: 4096,
-      timeout: cdk.Duration.seconds(30)
+      timeout: cdk.Duration.seconds(35),
+      environment: {
+        OPENSEARCH_HOSTNAME: props?.opensearchDomain.domainEndpoint || '',
+        BEDROCK_REGION: props?.env?.region || this.region,
+      },
+      vpc: props?.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      ephemeralStorageSize: cdk.Size.gibibytes(1),
     });
+
+    props?.opensearchDomain.grantReadWrite(lambdaFunction)
+    // Grant Lambda permission to invoke Bedrock
+    lambdaFunction.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+     resources: [`arn:aws:bedrock:eu-central-1::foundation-model/cohere.embed-multilingual-v3`],
+    }));
 
     // Create an API Gateway
     const api = new apigateway.LambdaRestApi(this, 'CLIPServerAPI', {
       handler: lambdaFunction,
+      deployOptions: {
+        stageName: 'dev',
+      },
       proxy: true // This enables proxying all requests to the Lambda function
     });
+    
   }
 }
 
