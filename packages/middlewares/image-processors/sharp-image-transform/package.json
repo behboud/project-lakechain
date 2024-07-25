@@ -37,6 +37,7 @@
     "@types/jest": "^29.0.0",
     "@types/lodash": "^4.17.7",
     "@types/node": "^20.2.1",
+    "@types/serialize-javascript": "^5.0.4",
     "rimraf": "^5.0.9",
     "sharp": "^0.33.4"
   },
@@ -49,8 +50,8 @@
     "@project-lakechain/layers": "*",
     "@project-lakechain/sdk": "*",
     "esbuild": "0.21.5",
-    "serialize-javascript": "^6.0.2",
-    "lodash": "^4.17.21"
+    "lodash": "^4.17.21",
+    "serialize-javascript": "^6.0.2"
   },
   "peerDependencies": {
     "aws-cdk-lib": "2.149.0",
