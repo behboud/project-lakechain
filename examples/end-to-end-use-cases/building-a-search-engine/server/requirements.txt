@@ -7,4 +7,5 @@ tqdm==4.66.4
 torchvision==0.17.0
 fastapi==0.109.2
 mangum
+numpy==1.26.4
 git+https://github.com/openai/CLIP.git
