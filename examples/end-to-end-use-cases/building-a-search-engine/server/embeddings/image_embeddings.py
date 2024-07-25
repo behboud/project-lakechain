@@ -24,7 +24,7 @@ CLIP_MODEL = os.environ.get('CLIP_MODEL', 'ViT-B/32')
 device = 'cpu'
 
 # Loading the CLIP model.
-model, processor = clip.load(CLIP_MODEL, device=device)
+model, processor = clip.load(CLIP_MODEL, device=device, download_root='/tmp/clip')
 
 def clip_create_text_embeddings(text: str):
   """
