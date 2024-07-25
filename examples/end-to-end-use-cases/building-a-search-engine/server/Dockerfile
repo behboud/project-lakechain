@@ -2,8 +2,8 @@ FROM public.ecr.aws/lambda/python:3.12
 
 RUN dnf update -y
 RUN dnf install -y git
-RUN mkdir -p ~/.cache
-RUN curl -L https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt -o ~/.cache/ViT-B-32.pt
+RUN mkdir -p /tmp/clip
+RUN curl -L https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt -o /tmp/clip/ViT-B-32.pt
 COPY . ${LAMBDA_TASK_ROOT}
 
 # Install the specified packages
