@@ -13,6 +13,7 @@
 #  limitations under the License.
 
 import os
+
 import boto3
 
 # The AWS session.
@@ -25,8 +26,9 @@ aws_region = os.getenv('AWS_REGION', session.region_name)
 bedrock_region = os.getenv('BEDROCK_REGION', 'us-east-1')
 
 if not es_hostname:
-  # Use a more specific exception class, other than
-  raise EnvironmentError('OPENSEARCH_HOSTNAME environment variable is not set.')
+    # Use a more specific exception class, other than
+    raise EnvironmentError(
+        'OPENSEARCH_HOSTNAME environment variable is not set.')
 
 if not aws_region:
-  raise EnvironmentError('AWS_REGION environment variable is not set.')
+    raise EnvironmentError('AWS_REGION environment variable is not set.')

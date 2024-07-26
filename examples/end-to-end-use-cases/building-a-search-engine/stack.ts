@@ -34,10 +34,8 @@ import { RecursiveCharacterTextSplitter } from '@project-lakechain/recursive-cha
 import { S3EventTrigger } from '@project-lakechain/s3-event-trigger';
 import { SharpImageTransform, sharp } from '@project-lakechain/sharp-image-transform';
 import * as cdk from 'aws-cdk-lib';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecrAssets from 'aws-cdk-lib/aws-ecr-assets';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import * as path from 'path';
@@ -62,7 +60,13 @@ export class SearchEnginePipeline extends cdk.Stack {
 
     // The OpenSearch domain.
     const openSearch = new OpenSearchDomain(this, 'Domain', {
-      vpc
+      vpc,
+      opts: {
+        vpcSubnets: [
+          // Use the first private subnet for OpenSearch. We don't want a cluster
+          { subnets: [vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnets[0]] }
+        ]
+      }
     });
 
     // The source bucket.
@@ -222,9 +226,9 @@ export class SearchEnginePipeline extends cdk.Stack {
         region: env.env?.region
       },
       opensearchDomain: openSearch.domain,
-      vpc,
+      vpc
     });
-    clipServer.node.addDependency(openSearch)
+    clipServer.node.addDependency(openSearch);
     // Display the source bucket information in the console.
     new cdk.CfnOutput(this, 'SourceBucket', {
       description: 'The name of the source bucket.',
@@ -248,7 +252,7 @@ export class SearchEnginePipeline extends cdk.Stack {
       enableDnsSupport: true,
       enableDnsHostnames: true,
       ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/20'),
-      maxAzs: 1,
+      maxAzs: 2, // we need min 2 azs for ECS Fargate
       subnetConfiguration: [
         {
           name: 'public',
@@ -278,43 +282,55 @@ export class CLIPServer extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: CLIPServerProps) {
     super(scope, id, props);
 
+    // Create ECS Cluster
+    const cluster = new cdk.aws_ecs.Cluster(this, 'CLIPServerCluster', {
+      vpc: props?.vpc
+    });
+
     // Build and push Docker image to ECR
     const dockerImage = new ecrAssets.DockerImageAsset(this, 'CLIPServerImage', {
       directory: path.join(__dirname, 'server') // Path to your Dockerfile and app code
     });
 
-    // Create a Lambda function from the Docker image
-    const lambdaFunction = new lambda.DockerImageFunction(this, 'CLIPServerLambda', {
-      code: lambda.DockerImageCode.fromEcr(dockerImage.repository, {
-        tagOrDigest: dockerImage.imageTag
-      }),
-      memorySize: 4096,
-      timeout: cdk.Duration.seconds(35),
-      environment: {
-        OPENSEARCH_HOSTNAME: props?.opensearchDomain.domainEndpoint || '',
-        BEDROCK_REGION: props?.env?.region || this.region,
-      },
-      vpc: props?.vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      ephemeralStorageSize: cdk.Size.gibibytes(1),
+    // Create Fargate Service with ALB
+    const fargateService = new cdk.aws_ecs_patterns.ApplicationLoadBalancedFargateService(
+      this,
+      'CLIPServerService',
+      {
+        cluster: cluster,
+        cpu: 2048, // 2 vCPU
+        memoryLimitMiB: 4096, // 4 GB
+        desiredCount: 1,
+        taskImageOptions: {
+          image: cdk.aws_ecs.ContainerImage.fromDockerImageAsset(dockerImage),
+          environment: {
+            OPENSEARCH_HOSTNAME: props?.opensearchDomain.domainEndpoint ?? '',
+            BEDROCK_REGION: props?.env?.region ?? this.region
+          },
+          containerPort: 8080
+        },
+        publicLoadBalancer: true
+      }
+    );
+    fargateService.targetGroup.configureHealthCheck({
+      path: '/'
     });
 
-    props?.opensearchDomain.grantReadWrite(lambdaFunction)
-    // Grant Lambda permission to invoke Bedrock
-    lambdaFunction.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
-      actions: ['bedrock:InvokeModel'],
-     resources: [`arn:aws:bedrock:eu-central-1::foundation-model/cohere.embed-multilingual-v3`],
-    }));
+    // Grant permissions to OpenSearch
+    props?.opensearchDomain.grantReadWrite(fargateService.taskDefinition.taskRole);
 
-    // Create an API Gateway
-    const api = new apigateway.LambdaRestApi(this, 'CLIPServerAPI', {
-      handler: lambdaFunction,
-      deployOptions: {
-        stageName: 'dev',
-      },
-      proxy: true // This enables proxying all requests to the Lambda function
+    // Grant permission to invoke Bedrock
+    fargateService.taskDefinition.addToTaskRolePolicy(
+      new cdk.aws_iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [`arn:aws:bedrock:${this.region}::foundation-model/cohere.embed-multilingual-v3`]
+      })
+    );
+
+    // Output the ALB DNS name
+    new cdk.CfnOutput(this, 'LoadBalancerDNS', {
+      value: fargateService.loadBalancer.loadBalancerDnsName
     });
-    
   }
 }
 

@@ -13,8 +13,9 @@
 #  limitations under the License.
 
 import os
-import torch
+
 import clip
+import torch
 
 # The CLIP model to use for generating the embeddings.
 CLIP_MODEL = os.environ.get('CLIP_MODEL', 'ViT-B/32')
@@ -24,13 +25,15 @@ CLIP_MODEL = os.environ.get('CLIP_MODEL', 'ViT-B/32')
 device = 'cpu'
 
 # Loading the CLIP model.
-model, processor = clip.load(CLIP_MODEL, device=device, download_root='/tmp/clip')
+model, processor = clip.load(
+    CLIP_MODEL, device=device, download_root='/tmp/clip')
+
 
 def clip_create_text_embeddings(text: str):
-  """
-  Generates text embeddings for the given text.
-  :return: The text embeddings for the given text.
-  """
-  with torch.no_grad():
-    encoded_text = model.encode_text(clip.tokenize(text))
-    return encoded_text.cpu().numpy().tolist()[0]
+    """
+    Generates text embeddings for the given text.
+    :return: The text embeddings for the given text.
+    """
+    with torch.no_grad():
+        encoded_text = model.encode_text(clip.tokenize(text))
+        return encoded_text.cpu().numpy().tolist()[0]

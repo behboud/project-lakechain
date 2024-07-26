@@ -1,12 +1,21 @@
-FROM public.ecr.aws/lambda/python:3.12
+FROM python:3
 
-RUN dnf update -y
-RUN dnf install -y git
-RUN mkdir -p /tmp/clip
-RUN curl -L https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt -o /tmp/clip/ViT-B-32.pt
-COPY . ${LAMBDA_TASK_ROOT}
+# Install dependencies.
+RUN export DEBIAN_FRONTEND=noninteractive \
+  && apt-get -y update \
+  && apt-get -y install --no-install-recommends git
 
-# Install the specified packages
-RUN pip install -r requirements.txt
-RUN pip3 install fastapi --target "${LAMBDA_TASK_ROOT}"
-CMD ["main.handler"]
+# Create a new user for running the application.
+ARG UID=1000
+RUN adduser --uid ${UID} --disabled-password docker-user
+
+# Switch to the docker user.
+USER docker-user
+WORKDIR /home/docker-user
+
+# Install Python dependencies.
+COPY . /home/docker-user
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
+
+CMD ["python","-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

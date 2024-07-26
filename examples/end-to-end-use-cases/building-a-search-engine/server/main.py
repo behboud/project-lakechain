@@ -14,11 +14,9 @@
 
 from urllib.parse import unquote
 
-from embeddings.image_embeddings import clip_create_text_embeddings
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from mangum import Mangum
 from opensearch import (create_opensearch_client, delete_documents,
                         delete_images, image_semantic_search,
                         text_semantic_search)
@@ -111,23 +109,3 @@ def delete_images_from_index():
     Deletes all images from the index.
     """
     return delete_images(client)
-
-
-# post method to receive a string as part of the request body and return the CLIP embedding
-
-@app.post("/embedding")
-async def get_clip_embedding(request: Request):
-    """
-    Returns the CLIP embedding for the given text.
-    :param request: The HTTP request.
-    """
-    text = await request.body()
-    text = text.decode('utf-8')
-    # Call the get_clip_embedding function with the text
-    # and return the embedding
-    # TODO: raises runtime error for too long context length
-    embedding = clip_create_text_embeddings(text)
-    return {"embedding": embedding}
-
-
-handler = Mangum(app)
