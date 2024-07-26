@@ -253,6 +253,7 @@ export class SearchEnginePipeline extends cdk.Stack {
       enableDnsHostnames: true,
       ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/20'),
       maxAzs: 2, // we need min 2 azs for ECS Fargate
+      natGateways: 1, // we need a single nat gateway for the VPC
       subnetConfiguration: [
         {
           name: 'public',
