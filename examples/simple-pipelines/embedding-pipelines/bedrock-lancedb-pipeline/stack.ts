@@ -135,7 +135,14 @@ export class BedrockLanceDbPipeline extends cdk.Stack {
       .withIdentifier('BedrockEmbeddingProcessor')
       .withCacheStorage(cache)
       .withSource(textSplitter)
-      .withRegion('us-east-1')
+    // Resize images to a width of 512px and convert them to PNG.
+    const imageTransform = new SharpImageTransform.Builder()
+      .withScope(this)
+      .withIdentifier('SharpTransform')
+      .withCacheStorage(cache)
+      .withSource(trigger)
+      .withSharpTransforms(sharp().resize(512).jpeg())
+      .build();
       .build();
 
     // Store the embeddings in LanceDB.
