@@ -17,22 +17,22 @@
 import path from 'path';
 
 import * as cdk from 'aws-cdk-lib';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as sources from 'aws-cdk-lib/aws-lambda-event-sources';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import * as node from 'aws-cdk-lib/aws-lambda-nodejs';
 
-import { Construct } from 'constructs';
-import { ServiceDescription } from '@project-lakechain/core/service';
 import { ComputeType } from '@project-lakechain/core/compute-type';
 import { when } from '@project-lakechain/core/dsl/vocabulary/conditions';
+import { ServiceDescription } from '@project-lakechain/core/service';
+import { Construct } from 'constructs';
 import { TitanEmbeddingModel } from './definitions/embedding-model';
 import { BedrockEmbeddingProps, BedrockEmbeddingPropsSchema } from './definitions/opts';
 
 import {
+  LAMBDA_INSIGHTS_VERSION,
   Middleware,
   MiddlewareBuilder,
-  LAMBDA_INSIGHTS_VERSION,
   NAMESPACE
 } from '@project-lakechain/core/middleware';
 
@@ -55,7 +55,7 @@ const PROCESSING_TIMEOUT = cdk.Duration.minutes(1);
 /**
  * The execution runtime for used compute.
  */
-const EXECUTION_RUNTIME  = lambda.Runtime.NODEJS_18_X;
+const EXECUTION_RUNTIME = lambda.Runtime.NODEJS_18_X;
 
 /**
  * The default memory size to allocate for the compute.
@@ -74,7 +74,7 @@ class TitanEmbeddingProcessorBuilder extends MiddlewareBuilder {
    */
   public withModel(model: TitanEmbeddingModel) {
     this.providerProps.model = model;
-    return (this);
+    return this;
   }
 
   /**
@@ -85,7 +85,7 @@ class TitanEmbeddingProcessorBuilder extends MiddlewareBuilder {
    */
   public withRegion(region: string) {
     this.providerProps.region = region;
-    return (this);
+    return this;
   }
 
   /**
@@ -93,13 +93,10 @@ class TitanEmbeddingProcessorBuilder extends MiddlewareBuilder {
    * service constructed with the given parameters.
    */
   public build(): TitanEmbeddingProcessor {
-    return (new TitanEmbeddingProcessor(
-      this.scope,
-      this.identifier, {
-        ...this.providerProps as BedrockEmbeddingProps,
-        ...this.props
-      }
-    ));
+    return new TitanEmbeddingProcessor(this.scope, this.identifier, {
+      ...(this.providerProps as BedrockEmbeddingProps),
+      ...this.props
+    });
   }
 }
 
@@ -108,7 +105,6 @@ class TitanEmbeddingProcessorBuilder extends MiddlewareBuilder {
  * chunks using the OpenAI API.
  */
 export class TitanEmbeddingProcessor extends Middleware {
-
   /**
    * The data processor lambda function.
    */
@@ -131,9 +127,7 @@ export class TitanEmbeddingProcessor extends Middleware {
   constructor(scope: Construct, id: string, props: BedrockEmbeddingProps) {
     super(scope, id, description, {
       ...props,
-      queueVisibilityTimeout: cdk.Duration.seconds(
-        6 * PROCESSING_TIMEOUT.toSeconds()
-      )
+      queueVisibilityTimeout: cdk.Duration.seconds(6 * PROCESSING_TIMEOUT.toSeconds())
     });
 
     // Validate the properties.
@@ -154,9 +148,7 @@ export class TitanEmbeddingProcessor extends Middleware {
       tracing: lambda.Tracing.ACTIVE,
       environmentEncryption: props.kmsKey,
       logGroup: this.logGroup,
-      insightsVersion: props.cloudWatchInsights ?
-        LAMBDA_INSIGHTS_VERSION :
-        undefined,
+      insightsVersion: props.cloudWatchInsights ? LAMBDA_INSIGHTS_VERSION : undefined,
       environment: {
         POWERTOOLS_SERVICE_NAME: description.name,
         POWERTOOLS_METRICS_NAMESPACE: NAMESPACE,
@@ -167,10 +159,7 @@ export class TitanEmbeddingProcessor extends Middleware {
       },
       bundling: {
         minify: true,
-        externalModules: [
-          '@aws-sdk/client-s3',
-          '@aws-sdk/client-sns'
-        ]
+        externalModules: ['@aws-sdk/client-s3', '@aws-sdk/client-sns']
       }
     });
 
@@ -180,22 +169,22 @@ export class TitanEmbeddingProcessor extends Middleware {
     this.grantPrincipal = this.processor.grantPrincipal;
 
     // Allow access to the Bedrock API.
-    this.processor.addToRolePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'bedrock:InvokeModel'
-      ],
-      resources: [
-        `arn:${cdk.Aws.PARTITION}:bedrock:${props.region}::foundation-model/${props.model.name}`,
-      ]
-    }));
+    this.processor.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['bedrock:InvokeModel'],
+        resources: [`arn:${cdk.Aws.PARTITION}:bedrock:${props.region}::foundation-model/${props.model.name}`]
+      })
+    );
 
     // Plug the SQS queue into the lambda function.
-    this.processor.addEventSource(new sources.SqsEventSource(this.eventQueue, {
-      batchSize: props.batchSize ?? 2,
-      maxConcurrency: 5,
-      reportBatchItemFailures: true
-    }));
+    this.processor.addEventSource(
+      new sources.SqsEventSource(this.eventQueue, {
+        batchSize: props.batchSize ?? 2,
+        maxConcurrency: 5,
+        reportBatchItemFailures: true
+      })
+    );
 
     // Grant the lambda function permissions to
     // publish to the SNS topic.
@@ -216,7 +205,7 @@ export class TitanEmbeddingProcessor extends Middleware {
     for (const source of this.sources) {
       source.grantReadProcessedDocuments(grantee);
     }
-    return ({} as iam.Grant);
+    return {} as iam.Grant;
   }
 
   /**
@@ -224,10 +213,7 @@ export class TitanEmbeddingProcessor extends Middleware {
    * type by this middleware.
    */
   supportedInputTypes(): string[] {
-    return ([
-      'text/plain',
-      'text/markdown'
-    ]);
+    return ['text/plain', 'text/markdown', 'image/png', 'image/jpeg'];
   }
 
   /**
@@ -235,7 +221,7 @@ export class TitanEmbeddingProcessor extends Middleware {
    * type by the data producer.
    */
   supportedOutputTypes(): string[] {
-    return (this.supportedInputTypes());
+    return this.supportedInputTypes();
   }
 
   /**
@@ -243,9 +229,7 @@ export class TitanEmbeddingProcessor extends Middleware {
    * middleware.
    */
   supportedComputeTypes(): ComputeType[] {
-    return ([
-      ComputeType.CPU
-    ]);
+    return [ComputeType.CPU];
   }
 
   /**
@@ -256,10 +240,7 @@ export class TitanEmbeddingProcessor extends Middleware {
    * type is `document-created`.
    */
   conditional() {
-    return (super
-      .conditional()
-      .and(when('type').equals('document-created'))
-    );
+    return super.conditional().and(when('type').equals('document-created'));
   }
 }
 

@@ -17,19 +17,22 @@
  */
 
 import * as cdk from 'aws-cdk-lib';
-import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as efs from 'aws-cdk-lib/aws-efs';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 
-import { Construct } from 'constructs';
+import {
+  TitanEmbeddingModel,
+  TitanEmbeddingProcessor
+} from '@project-lakechain/bedrock-embedding-processors';
 import { CacheStorage } from '@project-lakechain/core';
-import { S3EventTrigger } from '@project-lakechain/s3-event-trigger';
-import { RecursiveCharacterTextSplitter } from '@project-lakechain/recursive-character-text-splitter';
-import { TitanEmbeddingProcessor } from '@project-lakechain/bedrock-embedding-processors';
-import { PdfTextConverter } from '@project-lakechain/pdf-text-converter';
+import { EfsStorageProvider, LanceDbStorageConnector } from '@project-lakechain/lancedb-storage-connector';
 import { PandocTextConverter } from '@project-lakechain/pandoc-text-converter';
-import { LanceDbStorageConnector, EfsStorageProvider } from '@project-lakechain/lancedb-storage-connector';
-
+import { PdfTextConverter } from '@project-lakechain/pdf-text-converter';
+import { RecursiveCharacterTextSplitter } from '@project-lakechain/recursive-character-text-splitter';
+import { S3EventTrigger } from '@project-lakechain/s3-event-trigger';
+import { SharpImageTransform, sharp } from '@project-lakechain/sharp-image-transform';
+import { Construct } from 'constructs';
 /**
  * An example stack showcasing how to use Amazon Bedrock embeddings
  * and LanceDB for storing embeddings.
@@ -46,7 +49,6 @@ import { LanceDbStorageConnector, EfsStorageProvider } from '@project-lakechain/
  *
  */
 export class BedrockLanceDbPipeline extends cdk.Stack {
-
   /**
    * Stack constructor.
    */
@@ -121,11 +123,7 @@ export class BedrockLanceDbPipeline extends cdk.Stack {
       .withScope(this)
       .withIdentifier('RecursiveCharacterTextSplitter')
       .withCacheStorage(cache)
-      .withSources([
-        pdfConverter,
-        pandocConverter,
-        trigger
-      ])
+      .withSources([pdfConverter, pandocConverter, trigger])
       .withChunkSize(4096)
       .build();
 
@@ -135,6 +133,9 @@ export class BedrockLanceDbPipeline extends cdk.Stack {
       .withIdentifier('BedrockEmbeddingProcessor')
       .withCacheStorage(cache)
       .withSource(textSplitter)
+      .withRegion('eu-central-1')
+      .build();
+
     // Resize images to a width of 512px and convert them to PNG.
     const imageTransform = new SharpImageTransform.Builder()
       .withScope(this)
@@ -143,6 +144,14 @@ export class BedrockLanceDbPipeline extends cdk.Stack {
       .withSource(trigger)
       .withSharpTransforms(sharp().resize(512).jpeg())
       .build();
+
+    const imageEmbeddingProcessor = new TitanEmbeddingProcessor.Builder()
+      .withScope(this)
+      .withIdentifier('BedrockImageEmbeddingProcessor')
+      .withCacheStorage(cache)
+      .withSource(imageTransform)
+      .withModel(TitanEmbeddingModel.AMAZON_TITAN_EMBED_IMAGE_V1)
+      .withRegion('eu-central-1')
       .build();
 
     // Store the embeddings in LanceDB.
@@ -150,14 +159,15 @@ export class BedrockLanceDbPipeline extends cdk.Stack {
       .withScope(this)
       .withIdentifier('LanceDbStorageConnector')
       .withCacheStorage(cache)
-      .withSource(embeddingProcessor)
+      .withSources([embeddingProcessor, imageEmbeddingProcessor])
       .withVectorSize(1024)
-      .withStorageProvider(new EfsStorageProvider.Builder()
-        .withScope(this)
-        .withIdentifier('EfsStorage')
-        .withFileSystem(fileSystem)
-        .withVpc(vpc)
-        .build()
+      .withStorageProvider(
+        new EfsStorageProvider.Builder()
+          .withScope(this)
+          .withIdentifier('EfsStorage')
+          .withFileSystem(fileSystem)
+          .withVpc(vpc)
+          .build()
       )
       .build();
 
@@ -174,29 +184,33 @@ export class BedrockLanceDbPipeline extends cdk.Stack {
    * subnets for the pipeline.
    */
   private createVpc(id: string): ec2.IVpc {
-    return (new ec2.Vpc(this, id, {
+    return new ec2.Vpc(this, id, {
       enableDnsSupport: true,
       enableDnsHostnames: true,
       maxAzs: 1,
       ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/20'),
-      subnetConfiguration: [{
-        // Used by NAT Gateways to provide Internet access
-        // to the containers.
-        name: 'public',
-        subnetType: ec2.SubnetType.PUBLIC,
-        cidrMask: 28
-      }, {
-        // Used by the embedding containers.
-        name: 'private',
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-        cidrMask: 24
-      }, {
-        // Used by EFS.
-        name: 'isolated',
-        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-        cidrMask: 28
-      }]
-    }));
+      subnetConfiguration: [
+        {
+          // Used by NAT Gateways to provide Internet access
+          // to the containers.
+          name: 'public',
+          subnetType: ec2.SubnetType.PUBLIC,
+          cidrMask: 28
+        },
+        {
+          // Used by the embedding containers.
+          name: 'private',
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          cidrMask: 24
+        },
+        {
+          // Used by EFS.
+          name: 'isolated',
+          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+          cidrMask: 28
+        }
+      ]
+    });
   }
 }
 
@@ -205,7 +219,7 @@ const app = new cdk.App();
 
 // Environment variables.
 const account = process.env.CDK_DEFAULT_ACCOUNT ?? process.env.AWS_DEFAULT_ACCOUNT;
-const region  = process.env.CDK_DEFAULT_REGION ?? process.env.AWS_DEFAULT_REGION;
+const region = process.env.CDK_DEFAULT_REGION ?? process.env.AWS_DEFAULT_REGION;
 
 // Deploy the stack.
 new BedrockLanceDbPipeline(app, 'BedrockLanceDbPipeline', {

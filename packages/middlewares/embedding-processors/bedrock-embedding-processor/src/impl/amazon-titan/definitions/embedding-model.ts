@@ -57,6 +57,15 @@ export class TitanEmbeddingModel {
   });
 
   /**
+   * The Bedrock `amazon.titan-embed-image-v1` embedding model.
+   * @see https://docs.aws.amazon.com/bedrock/latest/userguide/titan-multiemb-models.html
+   */
+  static readonly AMAZON_TITAN_EMBED_IMAGE_V1 = new TitanEmbeddingModel('amazon.titan-embed-image-v1', {
+    dimensions: 1024,
+    maxTokens: 8192
+  });
+
+  /**
    * Create a new instance of the `TitanEmbeddingModel`
    * by name.
    * @param name the name of the model.

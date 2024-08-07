@@ -16,20 +16,16 @@
 
 import merge from 'lodash/merge';
 
-import { SQSEvent, Context, SQSRecord } from 'aws-lambda';
-import { logger, tracer } from '@project-lakechain/sdk/powertools';
 import { LambdaInterface } from '@aws-lambda-powertools/commons/types';
-import { CloudEvent } from '@project-lakechain/sdk/models';
-import { next } from '@project-lakechain/sdk/decorators';
-import { CacheStorage } from '@project-lakechain/sdk/cache';
-import { TitanEmbeddingModel } from '../../definitions/embedding-model';
 import { BedrockRuntime } from '@aws-sdk/client-bedrock-runtime';
+import { CacheStorage } from '@project-lakechain/sdk/cache';
+import { next } from '@project-lakechain/sdk/decorators';
+import { CloudEvent } from '@project-lakechain/sdk/models';
+import { logger, tracer } from '@project-lakechain/sdk/powertools';
+import { Context, SQSEvent, SQSRecord } from 'aws-lambda';
+import { TitanEmbeddingModel } from '../../definitions/embedding-model';
 
-import {
-  BatchProcessor,
-  EventType,
-  processPartialResponse
-} from '@aws-lambda-powertools/batch';
+import { BatchProcessor, EventType, processPartialResponse } from '@aws-lambda-powertools/batch';
 
 /**
  * Environment variables.
@@ -39,10 +35,12 @@ const EMBEDDING_MODEL: TitanEmbeddingModel = JSON.parse(process.env.EMBEDDING_MO
 /**
  * The Bedrock runtime.
  */
-const bedrock = tracer.captureAWSv3Client(new BedrockRuntime({
-  region: process.env.BEDROCK_REGION || process.env.AWS_REGION,
-  maxAttempts: 5
-}));
+const bedrock = tracer.captureAWSv3Client(
+  new BedrockRuntime({
+    region: process.env.BEDROCK_REGION || process.env.AWS_REGION,
+    maxAttempts: 5
+  })
+);
 
 /**
  * The async batch processor processes the received
@@ -62,7 +60,6 @@ const cacheStorage = new CacheStorage();
  * that are only supported on classes and methods.
  */
 class Lambda implements LambdaInterface {
-
   /**
    * Creates vector embeddings for the given document
    * and references the vector embeddings in the metadata.
@@ -71,15 +68,15 @@ class Lambda implements LambdaInterface {
   @next()
   private async processEvent(event: CloudEvent) {
     const document = event.data().document();
-
-    // Load the document in memory.
-    const text = (await document.data().asBuffer()).toString('utf-8');
-
+    const isText = document.mimeType().includes('text');
+    // build the body of request
+    const body = JSON.stringify({
+      inputText: isText ? (await document.data().asBuffer()).toString('utf-8') : document.filename().name,
+      inputImage: !isText ? (await document.data().asBuffer()).toString('base64') : undefined
+    });
     // Vectorize the document.
     const response = await bedrock.invokeModel({
-      body: JSON.stringify({
-        inputText: text
-      }),
+      body,
       modelId: EMBEDDING_MODEL.name,
       accept: 'application/json',
       contentType: 'application/json'
@@ -105,7 +102,7 @@ class Lambda implements LambdaInterface {
       }
     });
 
-    return (event);
+    return event;
   }
 
   /**
@@ -114,9 +111,7 @@ class Lambda implements LambdaInterface {
    * S3 event.
    */
   async recordHandler(record: SQSRecord): Promise<CloudEvent> {
-    return (await this.processEvent(
-      CloudEvent.from(JSON.parse(record.body))
-    ));
+    return await this.processEvent(CloudEvent.from(JSON.parse(record.body)));
   }
 
   /**
@@ -128,9 +123,7 @@ class Lambda implements LambdaInterface {
   @logger.injectLambdaContext()
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public async handler(event: SQSEvent, _: Context) {
-    return (await processPartialResponse(
-      event, this.recordHandler.bind(this), processor
-    ));
+    return await processPartialResponse(event, this.recordHandler.bind(this), processor);
   }
 }
 
