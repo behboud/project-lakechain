@@ -1,7 +1,7 @@
 {
   "name": "@project-lakechain/bedrock-embedding-processors",
   "description": "Creates embeddings from documents using Amazon Bedrock models.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
